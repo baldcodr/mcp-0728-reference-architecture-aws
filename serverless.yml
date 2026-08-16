@@ -1,0 +1,118 @@
+# Application stack. Owned by the service team, deployed per stage.
+#
+# The mcp block below synthesizes what you would otherwise hand-write in
+# CloudFormation: the REST API route at /datasets/mcp (ANY method), the
+# streaming Lambda integration with the integration timeout coupled to the
+# function timeout, the Cognito authorizer attachment, and the packaging
+# entry that bridges Lambda's streaming runtime to the SDK's fetch handler.
+#
+# Contract with the foundation stack (terraform/foundation): the Cognito
+# user pool ARN is read from SSM Parameter Store at package time. Terraform
+# writes it; this file consumes it. Neither stack imports the other's state.
+
+service: mcp-ref
+frameworkVersion: '4'
+
+provider:
+  name: aws
+  region: ${opt:region, 'eu-west-2'}
+  # Pin the reference runtime so local, CI, and deployed behavior agree.
+  runtime: nodejs22.x
+  # REGIONAL raises the response-stream idle bound from roughly 30 seconds
+  # (EDGE default) to roughly 5 minutes. Tools that work in silence longer
+  # than 30 seconds need this.
+  endpointType: REGIONAL
+  logRetentionInDays: 30
+  # Verifiable tracing, hop by hop. X-Ray on the gateway and the function
+  # gives one trace per request: route, authorizer outcome, function, and
+  # (via the captured client in src/handles.ts) every DynamoDB command.
+  # Note: tracing.lambda adds xray:PutTraceSegments and
+  # xray:PutTelemetryRecords to the execution role; X-Ray offers no
+  # resource-level scoping for these.
+  tracing:
+    apiGateway: true
+    lambda: true
+  logs:
+    restApi:
+      # Access logs are the proof that rejected tokens cost zero
+      # invocations: a 401 row here with no matching function log entry.
+      # xrayTraceId joins this edge record to the normalized root emitted by
+      # the function. clientId is the verified M2M principal; integration
+      # status stays empty when a request is rejected before Lambda.
+      accessLogging: true
+      format: '{"reqId":"$context.requestId","xrayTraceId":"$context.xrayTraceId","ip":"$context.identity.sourceIp","method":"$context.httpMethod","path":"$context.path","status":"$context.status","errorType":"$context.error.responseType","clientId":"$context.authorizer.claims.client_id","integrationStatus":"$context.integration.status","intLatencyMs":"$context.integrationLatency"}'
+      # Execution logging stays off: it requires the account-level API
+      # Gateway CloudWatch role and adds little once access logs and
+      # X-Ray traces exist.
+      executionLogging: false
+  iam:
+    role:
+      statements:
+        # Exactly the three operations the handle and replay store issues, on
+        # one table. No Query, no Scan, no wildcard. Every action granted here
+        # is effectively available to any tool call the model makes.
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+            - dynamodb:DeleteItem
+            - dynamodb:TransactWriteItems
+          Resource: !GetAtt HandlesTable.Arn
+
+build:
+  esbuild:
+    bundle: true
+    minify: false
+    sourcemap: true
+
+mcp:
+  servers:
+    datasets:
+      server: src/server.ts
+      # Also the cost ceiling: a client disconnect does not stop a running
+      # tool, so set this to the longest tool you actually have, not 900.
+      timeout: 60
+      memorySize: 1024
+      authorizer:
+        # Cognito user pool authorizer: API Gateway validates the JWT
+        # itself. Rejection costs zero invocations. With scopes set,
+        # callers present a Cognito access token carrying the scope.
+        name: mcpUserPool
+        arn: ${ssm:/mcp-ref/${sls:stage}/user-pool-arn}
+        scopes:
+          - mcp-ref/tools.invoke
+      environment:
+        HANDLES_TABLE: !Ref HandlesTable
+        HANDLE_TTL_SECONDS: '900'
+        COGNITO_USER_POOL_ID: ${ssm:/mcp-ref/${sls:stage}/user-pool-id}
+        COGNITO_CLIENT_ID: ${ssm:/mcp-ref/${sls:stage}/m2m-client-id}
+        MCP_REQUIRED_SCOPE: mcp-ref/tools.invoke
+
+resources:
+  Resources:
+    HandlesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        # Deterministic name so the CloudTrail data-event selector in the
+        # foundation stack audits exactly this table. Cost of naming it:
+        # a schema change that forces replacement needs a rename first.
+        TableName: ${self:service}-${sls:stage}-handles
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+        # Handle and replay records share this TTL. Deletion is best effort,
+        # so code rejects expired records before DynamoDB sweeps them.
+        TimeToLiveSpecification:
+          AttributeName: expiresAt
+          Enabled: true
+        SSESpecification:
+          SSEEnabled: true
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: true
+
+  Outputs:
+    HandlesTableName:
+      Value: !Ref HandlesTable
