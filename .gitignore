@@ -5,7 +5,6 @@ node_modules/
 dist/
 coverage/
 *.tsbuildinfo
-WHITEPAPER.published.md
 
 # Serverless Framework
 .serverless/

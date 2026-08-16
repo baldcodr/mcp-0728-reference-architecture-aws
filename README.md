@@ -225,17 +225,9 @@ fields @timestamp, userIdentity.arn, eventName
 
 Resolve the execution role with `aws cloudformation describe-stack-resource --stack-name mcp-ref-dev --logical-resource-id IamRoleLambdaExecution`. CloudTrail is compliance evidence with delivery latency, not a real-time alert.
 
-## Publish the paper
+## Whitepaper
 
-`MCP_REF_REPO` must be an HTTPS source-browser root ending in `/blob/<40-or-64-hex-commit>`, with no query or fragment:
-
-```bash
-export MCP_REF_REPO="https://github.com/<org>/<repo>/blob/$(git rev-parse HEAD)"
-npm run whitepaper:check
-npm run whitepaper:build
-```
-
-The generator validates every file, range, anchor, excerpt size, and the 1,500 to 2,500 word main-body limit. It writes ignored `WHITEPAPER.published.md`. CI builds twice, byte-compares the output, and uploads a commit-specific artifact.
+[`WHITEPAPER.md`](WHITEPAPER.md) is the canonical standalone manuscript. It embeds its code excerpts and immutable source links directly, so it requires no publication build step or generated companion artifact.
 
 ## Layout
 
@@ -249,9 +241,8 @@ tests/                          unit, protocol, concurrency, and gate tests
 scripts/assert-template.mjs     rendered CloudFormation assertions
 scripts/negative-paths.sh       isolated-stage gateway rejection proof
 scripts/idempotency-runtime.sh  credentialed retry proof
-scripts/build-whitepaper.mjs    deterministic publication generator
 terraform/foundation/           Cognito, SSM, X-Ray, audit, and optional WAF
-WHITEPAPER.md                   authored reference architecture
+WHITEPAPER.md                   standalone reference architecture manuscript
 ```
 
 ## Teardown

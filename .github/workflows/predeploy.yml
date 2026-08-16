@@ -1,0 +1,76 @@
+# Pre-deploy gates. Everything here runs without touching a live AWS account
+# except `serverless package`, which needs credentials to resolve the ${ssm:}
+# variable but creates nothing.
+name: predeploy
+
+on:
+  pull_request:
+
+jobs:
+  unit-and-protocol-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run verify
+      - run: npm run audit:dependencies
+
+  synthesize-and-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.CI_READONLY_ROLE_ARN }}
+          aws-region: eu-west-2
+      - run: npm ci
+      # Config errors in the mcp block (invalid authorizer shapes, name
+      # collisions, unsupported runtimes) surface here, before any deploy.
+      - run: npm run package -- --stage dev
+        env:
+          SERVERLESS_LICENSE_KEY: ${{ secrets.SERVERLESS_LICENSE_KEY }}
+      # Serverless applies REST stage settings after CloudFormation deploys.
+      # Assert that the package contains the deployment, log group, resolved
+      # stage settings, and traced functions that mechanism requires.
+      - run: npm run assert:template
+      - run: pipx install checkov
+      - run: checkov -d .serverless --framework cloudformation --quiet
+
+  terraform-validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform/foundation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.8
+      - run: terraform fmt -check
+      - run: terraform init -backend=false
+      - run: terraform validate
+      # The foundation was previously unscanned: checkov ran only against the
+      # synthesized application template. Every suppression in the config
+      # carries a written reason, so a clean run here means reviewed, not
+      # silent.
+      - run: pipx install checkov
+      - run: checkov -d . --framework terraform --quiet
+
+  scripts-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The verification scripts are the evidence path for the whitepaper's
+      # claims. Lint them like shipped code.
+      - run: shellcheck scripts/*.sh

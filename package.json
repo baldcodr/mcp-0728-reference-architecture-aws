@@ -15,8 +15,6 @@
     "verify:artifact": "npm run package && npm run assert:template && npm run scan",
     "verify:negative": "bash scripts/negative-paths.sh",
     "verify:idempotency": "bash scripts/idempotency-runtime.sh",
-    "whitepaper:build": "node scripts/build-whitepaper.mjs",
-    "whitepaper:check": "node scripts/build-whitepaper.mjs --check",
     "deploy": "serverless deploy"
   },
   "dependencies": {
