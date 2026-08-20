@@ -1,0 +1,201 @@
+# AWS service icons are hosted by https://icons.terrastruct.com/.
+direction: down
+
+classes: {
+  actor: {
+    style: {
+      fill: "#FFFFFF"
+      stroke: "#334155"
+      stroke-width: 2
+      font-color: "#0F172A"
+      border-radius: 6
+    }
+  }
+  service: {
+    style: {
+      fill: "#FFFFFF"
+      stroke: "#334155"
+      stroke-width: 2
+      font-color: "#0F172A"
+      border-radius: 6
+      shadow: true
+    }
+  }
+  optional: {
+    style: {
+      fill: "#F8FAFC"
+      stroke: "#64748B"
+      stroke-width: 2
+      stroke-dash: 6
+      font-color: "#334155"
+      border-radius: 6
+    }
+  }
+}
+
+client: |md
+  **machine client**
+
+  MCP `2026-07-28`
+| {
+  shape: cloud
+  class: actor
+  width: 50
+  height: 50
+}
+
+aws: "AWS account / eu-west-2" {
+  direction: right
+  grid-columns: 3
+  grid-gap: 32
+  style: {
+    fill: "#F8FAFC"
+    stroke: "#334155"
+    stroke-width: 2
+    font-color: "#334155"
+    border-radius: 10
+  }
+
+  identity: {
+    direction: down
+    grid-gap: 18
+    style: {
+      fill: "#FFF7ED"
+      stroke: "#C2410C"
+      stroke-width: 2
+      font-color: "#7C2D12"
+      border-radius: 8
+    }
+
+    cognito: |md
+      **Cognito**
+
+      JWT + scope
+    | {
+      icon: https://icons.terrastruct.com/aws/Security%2C%20Identity%2C%20%26%20Compliance/Amazon-Cognito.svg
+      class: service
+    }
+
+    ssm: |md
+      **SSM**
+
+      client config
+    | {
+      icon: https://icons.terrastruct.com/aws/Management%20%26%20Governance/AWS-Systems-Manager.svg
+      class: service
+    }
+  }
+
+  main: {
+    direction: right
+    grid-columns: 3
+    grid-gap: 20
+    style: {
+      fill: "#EFF6FF"
+      stroke: "#1D4ED8"
+      stroke-width: 2
+      font-color: "#1E3A8A"
+      border-radius: 8
+    }
+
+    gateway: |md
+      **1. API Gateway**
+
+      authorizer
+    | {
+      shape: image
+      icon: https://icons.terrastruct.com/aws/Networking%20%26%20Content%20Delivery/Amazon-API-Gateway.svg
+      width: 52
+      height: 52
+      class: service
+    }
+
+    lambda: |md
+      **2. Lambda**
+
+      JWT backstop
+    | {
+      shape: image
+      icon: https://icons.terrastruct.com/aws/Compute/AWS-Lambda.svg
+      width: 52
+      height: 52
+      class: service
+    }
+
+    table: |md
+      **3. DynamoDB**
+
+      owner-bound state
+    | {
+      shape: image
+      icon: https://icons.terrastruct.com/aws/Database/Amazon-DynamoDB.svg
+      width: 52
+      height: 52
+      class: service
+    }
+  }
+
+  controls: {
+    direction: down
+    grid-gap: 18
+    style: {
+      fill: "#F0FDF4"
+      stroke: "#15803D"
+      stroke-width: 2
+      font-color: "#14532D"
+      border-radius: 8
+    }
+
+    waf: |md
+      **WAF**
+
+      optional ACL
+    | {
+      icon: https://icons.terrastruct.com/aws/Security%2C%20Identity%2C%20%26%20Compliance/AWS-WAF.svg
+      class: optional
+    }
+
+    xray: |md
+      **X-Ray**
+
+      traces
+    | {
+      icon: https://icons.terrastruct.com/aws/Developer%20Tools/AWS-X-Ray.svg
+      class: service
+    }
+  }
+}
+
+# Core path: the client enters from above; the AWS flow continues left-to-right.
+client -> aws.identity.cognito: {
+  style.stroke: "#F59E0B"
+  style.stroke-width: 2
+  style.stroke-dash: 3
+}
+aws.identity.cognito -> aws.main.gateway: {
+  style.stroke: "#1D4ED8"
+  style.stroke-width: 3
+}
+aws.identity.ssm -> aws.main.gateway: {
+  style.stroke: "#64748B"
+  style.stroke-width: 2
+  style.stroke-dash: 4
+}
+aws.main.gateway -> aws.main.lambda: {
+  style.stroke: "#1D4ED8"
+  style.stroke-width: 3
+}
+aws.main.lambda -> aws.main.table: {
+  style.stroke: "#1D4ED8"
+  style.stroke-width: 3
+}
+aws.main.table -> aws.controls.waf: {
+  style.stroke: "#15803D"
+  style.stroke-width: 2
+  style.stroke-dash: 4
+}
+aws.main.table -> aws.controls.xray: {
+  style.stroke: "#15803D"
+  style.stroke-width: 2
+  style.stroke-dash: 4
+}
