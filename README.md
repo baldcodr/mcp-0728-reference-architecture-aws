@@ -170,7 +170,7 @@ cd ../..
 shellcheck scripts/*.sh
 ```
 
-CI runs tests, type checking, production dependency audit, synthesis assertions, both Checkov scans, Terraform validation, ShellCheck, and deterministic whitepaper generation. It does not run `terraform plan`, deploy, or claim live AWS evidence.
+CI runs tests, type checking, production dependency audit, synthesis assertions, both Checkov scans, Terraform validation, and ShellCheck. It does not run `terraform plan`, deploy, or claim live AWS evidence.
 
 ## Deployment evidence
 
