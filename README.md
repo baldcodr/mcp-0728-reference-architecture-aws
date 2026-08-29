@@ -236,7 +236,7 @@ serverless.yml                  application stack and least-privilege role
 src/server.ts                   authenticated MCP tools and audit wrapper
 src/handles.ts                  transactional handle and replay store
 src/identity.ts                 Cognito access-token verification
-src/log.ts                      privacy-safe structured audit events
+src/log.ts                      structured audit events
 tests/                          unit, protocol, concurrency, and gate tests
 scripts/assert-template.mjs     rendered CloudFormation assertions
 scripts/negative-paths.sh       isolated-stage gateway rejection proof
