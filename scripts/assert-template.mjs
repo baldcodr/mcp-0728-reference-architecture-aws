@@ -18,10 +18,17 @@ const state = JSON.parse(readFileSync(statePath, "utf8"));
 const resourceMap = template.Resources ?? {};
 const resources = Object.values(resourceMap);
 const provider = state.service?.provider ?? {};
-const REQUIRED_DYNAMODB_ACTIONS = new Set([
+const DIRECT_DYNAMODB_ACTIONS = new Set([
   "dynamodb:DeleteItem",
   "dynamodb:GetItem",
-  "dynamodb:TransactWriteItems",
+]);
+const TRANSACTION_DYNAMODB_ACTIONS = new Set([
+  "dynamodb:PutItem",
+  "dynamodb:UpdateItem",
+]);
+const REQUIRED_DYNAMODB_ACTIONS = new Set([
+  ...DIRECT_DYNAMODB_ACTIONS,
+  ...TRANSACTION_DYNAMODB_ACTIONS,
 ]);
 
 let failed = false;
@@ -30,9 +37,20 @@ const fail = (msg) => {
   failed = true;
 };
 
-const functions = resources.filter((r) => r.Type === "AWS::Lambda::Function");
+const lambdaEntries = Object.entries(resourceMap).filter(
+  ([, resource]) => resource.Type === "AWS::Lambda::Function",
+);
+const apiGatewayMethods = resources.filter(
+  (resource) => resource.Type === "AWS::ApiGateway::Method",
+);
+const functionEntries = lambdaEntries.filter(([logicalId]) =>
+  apiGatewayMethods.some((method) =>
+    referencesLogicalId(method.Properties?.Integration?.Uri, logicalId),
+  ),
+);
+const functions = functionEntries.map(([, resource]) => resource);
 if (functions.length === 0) {
-  fail("no Lambda functions in template");
+  fail("no API Gateway-integrated Lambda functions in template");
 } else if (
   !functions.some((r) => r.Properties?.TracingConfig?.Mode === "Active")
 ) {
@@ -60,6 +78,15 @@ function isHandlesTableArn(resource) {
   );
 }
 
+function isTransactWriteOnly(statement) {
+  const condition = statement.Condition;
+  if (!condition || Object.keys(condition).length !== 1) return false;
+  const equals = condition["ForAnyValue:StringEquals"];
+  if (!equals || Object.keys(equals).length !== 1) return false;
+  const operations = asArray(equals["dynamodb:EnclosingOperation"]);
+  return operations.length === 1 && operations[0] === "TransactWriteItems";
+}
+
 const roleIds = new Set(
   functions
     .map((fn) => referencedRoleId(fn.Properties?.Role))
@@ -79,11 +106,13 @@ for (const roleId of roleIds) {
   const statements = asArray(role.Properties?.Policies).flatMap((policy) =>
     asArray(policy.PolicyDocument?.Statement),
   );
-  const dynamodbStatements = statements.filter((statement) =>
-    asArray(statement.Action).some(
-      (action) =>
-        typeof action === "string" && action.startsWith("dynamodb:"),
-    ),
+  const dynamodbStatements = statements.filter(
+    (statement) =>
+      statement.Effect === "Allow" &&
+      asArray(statement.Action).some(
+        (action) =>
+          typeof action === "string" && action.startsWith("dynamodb:"),
+      ),
   );
   const actualActions = new Set(
     dynamodbStatements.flatMap((statement) =>
@@ -102,6 +131,22 @@ for (const roleId of roleIds) {
   for (const action of actualActions) {
     if (!REQUIRED_DYNAMODB_ACTIONS.has(action)) {
       fail(`${roleId} grants unexpected action ${action}`);
+    }
+  }
+  for (const action of DIRECT_DYNAMODB_ACTIONS) {
+    const grants = dynamodbStatements.filter((statement) =>
+      asArray(statement.Action).includes(action),
+    );
+    if (!grants.some((statement) => statement.Condition === undefined)) {
+      fail(`${roleId} does not grant direct action ${action}`);
+    }
+  }
+  for (const action of TRANSACTION_DYNAMODB_ACTIONS) {
+    const grants = dynamodbStatements.filter((statement) =>
+      asArray(statement.Action).includes(action),
+    );
+    if (!grants.every(isTransactWriteOnly)) {
+      fail(`${roleId} grants ${action} outside TransactWriteItems`);
     }
   }
   for (const statement of dynamodbStatements) {
@@ -139,9 +184,7 @@ const apiGatewayPermissions = resources.filter(
     resource.Properties?.Action === "lambda:InvokeFunction" &&
     resource.Properties?.Principal === "apigateway.amazonaws.com",
 );
-for (const [functionId] of Object.entries(resourceMap).filter(
-  ([, resource]) => resource.Type === "AWS::Lambda::Function",
-)) {
+for (const [functionId] of functionEntries) {
   const permission = apiGatewayPermissions.find((candidate) =>
     referencesLogicalId(candidate.Properties?.FunctionName, functionId),
   );
@@ -217,5 +260,5 @@ if (
 
 if (failed) process.exit(1);
 console.log(
-  `template assertions passed: ${functions.length} function(s) traced, exact DynamoDB IAM and ApiGateway observability configured`,
+  `template assertions passed: ${functions.length} function(s) traced, transaction-scoped DynamoDB IAM and ApiGateway observability configured`,
 );

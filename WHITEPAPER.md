@@ -296,23 +296,28 @@ resource "aws_ssm_parameter" "token_endpoint" {
   value = "https://${aws_cognito_user_pool_domain.mcp.domain}.auth.${var.aws_region}.amazoncognito.com/oauth2/token"
 ```
 
-The hardened store issues only `GetItem`, `DeleteItem`, and `TransactWriteItems`, all against the handle table ARN. It needs neither `Query` nor `Scan`, and direct `PutItem` and `UpdateItem` grants would be stale excess privilege. Active X-Ray tracing adds AWS's required trace-write permissions, which do not support resource-level scoping.
+The hardened store reads with `GetItem`, closes with `DeleteItem`, and writes through `TransactWriteItems`, all against the handle table ARN. DynamoDB authorizes each transaction suboperation through its underlying IAM action, so the role grants `PutItem` and `UpdateItem` only when `dynamodb:EnclosingOperation` is `TransactWriteItems` \[25\]. It needs neither `Query` nor `Scan`, and cannot issue `PutItem` or `UpdateItem` directly. Active X-Ray tracing adds AWS's required trace-write permissions, which do not support resource-level scoping.
 
-[Source: serverless.yml L48-L59](https://github.com/baldcodr/mcp-0728-reference-architecture-aws/blob/a708458028e7fdf52a92b2b86b81fdb53c4a88f0/serverless.yml#L48-L59)
+[Source: serverless.yml L48-L69](https://github.com/baldcodr/mcp-0728-reference-architecture-aws/blob/main/serverless.yml#L48-L69)
 
 ```
   iam:
     role:
       statements:
-        # Exactly the three operations the handle and replay store issues, on
-        # one table. No Query, no Scan, no wildcard. Every action granted here
-        # is effectively available to any tool call the model makes.
         - Effect: Allow
           Action:
             - dynamodb:GetItem
             - dynamodb:DeleteItem
-            - dynamodb:TransactWriteItems
           Resource: !GetAtt HandlesTable.Arn
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+          Resource: !GetAtt HandlesTable.Arn
+          Condition:
+            ForAnyValue:StringEquals:
+              dynamodb:EnclosingOperation:
+                - TransactWriteItems
 ```
 
 ## 5\. Threat model (STRIDE)
@@ -509,4 +514,5 @@ Identity is the decisive migration constraint for this implementation. AgentCore
 22. AWS, "Amazon Bedrock AgentCore Gateway: A secure AI gateway for agents, tools, and models." [https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway.html](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway.html)   
 23. AWS, "Set up outbound authorization for your gateway," Amazon Bedrock AgentCore Developer Guide. [https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-outbound-auth.html](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-outbound-auth.html)   
 24. AWS, "Amazon Bedrock AgentCore pricing." [https://aws.amazon.com/bedrock/agentcore/pricing/](https://aws.amazon.com/bedrock/agentcore/pricing/) 
+25. AWS, "Using IAM with DynamoDB transactions," Amazon DynamoDB Developer Guide. [https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transaction-apis-iam.html](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transaction-apis-iam.html)
 

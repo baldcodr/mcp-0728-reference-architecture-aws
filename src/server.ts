@@ -42,6 +42,13 @@ const HANDLE_KIND = "dataset-cursor";
 const PAGE_SIZE_MAX = 50;
 export const REQUIRED_SCOPE = "mcp-ref/tools.invoke";
 const idempotencyKeySchema = z.string().min(8).max(128);
+const numericPageSizeSchema = z.number().int().min(1).max(PAGE_SIZE_MAX);
+const pageSizeSchema = z
+  .union([
+    numericPageSizeSchema,
+    z.string().regex(/^(?:[1-9]|[1-4][0-9]|50)$/).transform(Number),
+  ])
+  .default(20);
 
 interface DatasetModuleOptions {
   verifier: OAuthTokenVerifier;
@@ -153,7 +160,7 @@ export function createDatasetModule({
         "to dataset_next and dataset_close. Handles expire server-side.",
       inputSchema: z.object({
         dataset: z.string().min(1).max(64),
-        page_size: z.number().int().min(1).max(PAGE_SIZE_MAX).default(20),
+        page_size: pageSizeSchema,
         idempotency_key: idempotencyKeySchema,
       }),
     },

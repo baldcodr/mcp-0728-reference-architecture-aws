@@ -8,7 +8,7 @@ Deployable companion to `WHITEPAPER.md`: an MCP 2026-07-28 server on Lambda behi
 - Terraform 1.15.8
 - Serverless Framework v4, with `serverless login` or `SERVERLESS_LICENSE_KEY`
 - AWS CLI credentials for the target account and region
-- `curl` and `jq` for deployed checks
+- `curl`, `jq`, and OpenSSL for deployed checks
 - Checkov and ShellCheck for the complete local gate
 
 The examples default to `eu-west-2` and stage `dev`.
@@ -43,7 +43,6 @@ Then package, inspect, and deploy the application:
 npm ci
 npm run verify
 npm run package -- --stage dev
-npm run assert:template
 npx serverless deploy --stage dev
 ```
 
@@ -66,70 +65,73 @@ Remote state, locking, production approvals, and deployment CI are adopter-owned
 
 ## Obtain a token
 
-The client secret is intentionally absent from SSM. Retrieve it from Cognito and exchange it with client credentials:
+The client secret is intentionally absent from SSM. Source the token helper so the resulting `TOKEN` is exported in the current shell without being printed:
 
 ```bash
-POOL_ID=$(aws ssm get-parameter \
-  --name /mcp-ref/dev/user-pool-id \
-  --query Parameter.Value --output text)
-CLIENT_ID=$(aws ssm get-parameter \
-  --name /mcp-ref/dev/m2m-client-id \
-  --query Parameter.Value --output text)
-TOKEN_URL=$(aws ssm get-parameter \
-  --name /mcp-ref/dev/token-endpoint \
-  --query Parameter.Value --output text)
-SECRET=$(aws cognito-idp describe-user-pool-client \
-  --user-pool-id "$POOL_ID" \
-  --client-id "$CLIENT_ID" \
-  --query UserPoolClient.ClientSecret --output text)
-TOKEN=$(curl --silent --show-error --fail \
-  --request POST "$TOKEN_URL" \
-  --user "$CLIENT_ID:$SECRET" \
-  --header 'Content-Type: application/x-www-form-urlencoded' \
-  --data 'grant_type=client_credentials&scope=mcp-ref/tools.invoke' \
-  | jq -er .access_token)
-export TOKEN
-unset SECRET
+source scripts/obtain-token.sh
 ```
 
-Do not print the token or place it directly in shell history.
+Set `STAGE`, `AWS_REGION`, or `AWS_PROFILE` first to override their defaults. Run `obtain_mcp_token` again when the token expires. Do not print the token or place it directly in shell history.
+
+## Test with MCP Playground Online
+
+[MCP Server Tester](https://mcpplaygroundonline.com/mcp-server-tester) can discover and invoke the deployed tools from a browser. It is a third-party service, so use a disposable development stage and a fresh short-lived token. Never provide the Cognito client secret or a production token.
+
+Prepare the endpoint and token first. On macOS, `pbcopy` transfers the token to the clipboard without printing it:
+
+```bash
+export ENDPOINT='https://<api-id>.execute-api.eu-west-2.amazonaws.com/dev/datasets/mcp'
+source scripts/obtain-token.sh
+printf %s "$TOKEN" | pbcopy
+```
+
+1. Open MCP Server Tester and choose HTTP or Streamable HTTP. If it offers a protocol selector, choose `2026-07-28`; this server has no legacy `initialize` handshake.
+2. Paste `ENDPOINT` into the server URL field. Select Bearer authentication and paste the token value without a `Bearer ` prefix. If the UI exposes raw headers instead, set `Authorization` to `Bearer <token>`.
+3. Connect and confirm that `dataset_open`, `dataset_next`, and `dataset_close` appear. After a deployment, disconnect and reconnect to refresh a cached tool schema.
+4. Select `dataset_open` and invoke it with the following arguments, replacing the key with a fresh opaque value between 8 and 128 characters:
+
+Generate a key for each new open or next-page operation with `openssl rand -hex 16`. Reuse a key only to retry the identical operation.
+
+```json
+{
+  "dataset": "orders",
+  "page_size": 20,
+  "idempotency_key": "<fresh-key>"
+}
+```
+
+The playground's generated form may serialize `page_size` as `"20"`; the server accepts either representation and normalizes it to an integer. A successful result contains a `handle_id`, `total_rows`, and `expires_at`.
+
+Call `dataset_next` with the returned handle and a new key for each page. Reusing the same key intentionally replays the same response:
+
+```json
+{
+  "handle_id": "<handle-id>",
+  "idempotency_key": "<new-fresh-key>"
+}
+```
+
+Repeat until the result contains `"done": true`, then call `dataset_close` with the same handle:
+
+```json
+{
+  "handle_id": "<handle-id>"
+}
+```
+
+An HTTP `401` usually means the token is missing or expired; source the helper again and replace the playground token. An HTTP `403` means the token lacks `mcp-ref/tools.invoke`. An `idempotency_conflict` means a key was reused with changed arguments. Input validation errors usually indicate a key outside the 8-to-128-character limit or a `page_size` outside 1 to 50. Use the raw JSON-RPC view to inspect the exact `tools/list` and `tools/call` frames.
 
 ## Call a tool
 
 `dataset_open` and `dataset_next` require an `idempotency_key` between 8 and 128 characters. Use a new opaque key for each logical operation and reuse that key only when retrying the same operation with the same arguments.
 
-```bash
-OPEN_KEY=$(openssl rand -hex 16)
+`dataset_open.page_size` accepts an integer from 1 to 50 or its canonical decimal string form, such as `"20"`, for compatibility with form-based MCP clients. The server normalizes both forms to an integer.
 
-curl --silent --show-error --fail "$ENDPOINT" \
-  --header "Authorization: Bearer $TOKEN" \
-  --header 'Content-Type: application/json' \
-  --header 'Accept: application/json' \
-  --header 'MCP-Protocol-Version: 2026-07-28' \
-  --header 'Mcp-Method: tools/call' \
-  --header 'Mcp-Name: dataset_open' \
-  --data "$(jq -cn --arg key "$OPEN_KEY" '{
-    jsonrpc: "2.0",
-    id: 1,
-    method: "tools/call",
-    params: {
-      name: "dataset_open",
-      arguments: {
-        dataset: "orders",
-        page_size: 20,
-        idempotency_key: $key
-      },
-      _meta: {
-        "io.modelcontextprotocol/clientInfo": {
-          name: "curl",
-          version: "1.0.0"
-        },
-        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-        "io.modelcontextprotocol/clientCapabilities": {}
-      }
-    }
-  }')"
+```bash
+npm run call:dataset-open
 ```
+
+The script validates the HTTP and MCP responses, prints the decoded handle metadata, and generates a fresh idempotency key. Override its defaults with `DATASET`, `PAGE_SIZE`, or `OPEN_KEY`.
 
 The response contains `handle_id`. Supply it to `dataset_next` with a new key, or to `dataset_close`. Retry rules are stable:
 
@@ -156,7 +158,7 @@ npm run assert:template
 npm run scan
 ```
 
-The template assertion fails unless the rendered stack contains active Lambda tracing, required gateway log variables, API-scoped Lambda invocation, and exactly `GetItem`, `DeleteItem`, and `TransactWriteItems` on the handle table. It rejects stale `PutItem`, `UpdateItem`, and wildcard grants.
+The template assertion fails unless the rendered stack contains active Lambda tracing, required gateway log variables, API-scoped Lambda invocation, direct `GetItem` and `DeleteItem`, and transaction-scoped `PutItem` and `UpdateItem` on the handle table. It rejects unscoped writes, unused DynamoDB actions, and wildcard resources.
 
 Validate the foundation separately:
 
@@ -227,7 +229,7 @@ Resolve the execution role with `aws cloudformation describe-stack-resource --st
 
 ## Whitepaper
 
-[`WHITEPAPER.md`](WHITEPAPER.md) is the canonical standalone manuscript. It embeds its code excerpts and immutable source links directly, so it requires no publication build step or generated companion artifact.
+[`WHITEPAPER.md`](WHITEPAPER.md) is the canonical standalone manuscript. It embeds its code excerpts and source links directly.
 
 ## Layout
 
@@ -239,6 +241,8 @@ src/identity.ts                 Cognito access-token verification
 src/log.ts                      structured audit events
 tests/                          unit, protocol, concurrency, and gate tests
 scripts/assert-template.mjs     rendered CloudFormation assertions
+scripts/dataset-open.sh         single deployed dataset_open call
+scripts/obtain-token.sh         Cognito client-credentials token helper
 scripts/negative-paths.sh       isolated-stage gateway rejection proof
 scripts/idempotency-runtime.sh  credentialed retry proof
 terraform/foundation/           Cognito, SSM, X-Ray, audit, and optional WAF

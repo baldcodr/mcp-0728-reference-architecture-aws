@@ -48,21 +48,35 @@ provider:
   iam:
     role:
       statements:
-        # Exactly the three operations the handle and replay store issues, on
-        # one table. No Query, no Scan, no wildcard. Every action granted here
-        # is effectively available to any tool call the model makes.
+        # Direct reads and closes use GetItem and DeleteItem on one table.
         - Effect: Allow
           Action:
             - dynamodb:GetItem
             - dynamodb:DeleteItem
-            - dynamodb:TransactWriteItems
           Resource: !GetAtt HandlesTable.Arn
+        # DynamoDB authorizes transaction suboperations by their underlying
+        # actions. Restrict PutItem and UpdateItem to TransactWriteItems so the
+        # function cannot issue either operation directly.
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+          Resource: !GetAtt HandlesTable.Arn
+          Condition:
+            ForAnyValue:StringEquals:
+              dynamodb:EnclosingOperation:
+                - TransactWriteItems
 
 build:
   esbuild:
     bundle: true
     minify: false
     sourcemap: true
+    # X-Ray includes CommonJS modules that call require() inside the ESM bundle.
+    banner:
+      js: >-
+        import { createRequire as __mcpCreateRequire } from 'node:module';
+        const require = __mcpCreateRequire(import.meta.url);
 
 mcp:
   servers:

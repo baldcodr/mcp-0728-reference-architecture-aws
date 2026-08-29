@@ -15,6 +15,7 @@
     "verify:artifact": "npm run package && npm run assert:template && npm run scan",
     "verify:negative": "bash scripts/negative-paths.sh",
     "verify:idempotency": "bash scripts/idempotency-runtime.sh",
+    "call:dataset-open": "bash scripts/dataset-open.sh",
     "deploy": "serverless deploy"
   },
   "dependencies": {

@@ -28,12 +28,18 @@ const executionRole = {
           Statement: [
             {
               Effect: "Allow",
-              Action: [
-                "dynamodb:GetItem",
-                "dynamodb:DeleteItem",
-                "dynamodb:TransactWriteItems",
-              ],
+              Action: ["dynamodb:GetItem", "dynamodb:DeleteItem"],
               Resource: { "Fn::GetAtt": ["HandlesTable", "Arn"] },
+            },
+            {
+              Effect: "Allow",
+              Action: ["dynamodb:PutItem", "dynamodb:UpdateItem"],
+              Resource: { "Fn::GetAtt": ["HandlesTable", "Arn"] },
+              Condition: {
+                "ForAnyValue:StringEquals": {
+                  "dynamodb:EnclosingOperation": ["TransactWriteItems"],
+                },
+              },
             },
           ],
         },
@@ -45,6 +51,21 @@ const executionRole = {
 const restApi = {
   Type: "AWS::ApiGateway::RestApi",
   Properties: {},
+};
+
+const integrationMethod = {
+  Type: "AWS::ApiGateway::Method",
+  Properties: {
+    RestApiId: { Ref: "RestApi" },
+    Integration: {
+      Uri: {
+        "Fn::Join": [
+          "",
+          ["arn:aws:apigateway:lambda:path/functions/", { "Fn::GetAtt": ["F", "Arn"] }],
+        ],
+      },
+    },
+  },
 };
 
 const invokePermission = {
@@ -105,6 +126,7 @@ function runAgainst(
       Resources: {
         ExecutionRole: executionRole,
         RestApi: restApi,
+        IntegrationMethod: integrationMethod,
         InvokePermission: invokePermission,
         ...resources,
       },
@@ -135,6 +157,26 @@ describe("template assertion gate", () => {
         D: deployment,
         L: apiGatewayLogGroup,
         S: loggedStage,
+      }),
+    ).toBe(0);
+  });
+
+  it("ignores framework custom-resource Lambdas", () => {
+    expect(
+      runAgainst({
+        F: tracedFunction,
+        D: deployment,
+        L: apiGatewayLogGroup,
+        CustomResourceRole: {
+          Type: "AWS::IAM::Role",
+          Properties: { Policies: [] },
+        },
+        CustomResourceFunction: {
+          Type: "AWS::Lambda::Function",
+          Properties: {
+            Role: { "Fn::GetAtt": ["CustomResourceRole", "Arn"] },
+          },
+        },
       }),
     ).toBe(0);
   });
@@ -207,8 +249,8 @@ describe("template assertion gate", () => {
     expect(runAgainst({ D: deployment, L: apiGatewayLogGroup })).toBe(1);
   });
 
-  it.each(["dynamodb:PutItem", "dynamodb:UpdateItem"])(
-    "fails when the execution role retains legacy %s access",
+  it.each(["dynamodb:Query", "dynamodb:Scan", "dynamodb:TransactWriteItems"])(
+    "fails when the execution role grants unexpected %s access",
     (legacyAction) => {
       const staleRole = structuredClone(executionRole);
       staleRole.Properties.Policies[0].PolicyDocument.Statement[0].Action.push(
@@ -225,11 +267,10 @@ describe("template assertion gate", () => {
     },
   );
 
-  it("fails when transaction access is absent", () => {
+  it("fails when a required transaction suboperation is absent", () => {
     const incompleteRole = structuredClone(executionRole);
-    incompleteRole.Properties.Policies[0].PolicyDocument.Statement[0].Action = [
-      "dynamodb:GetItem",
-      "dynamodb:DeleteItem",
+    incompleteRole.Properties.Policies[0].PolicyDocument.Statement[1].Action = [
+      "dynamodb:PutItem",
     ];
     expect(
       runAgainst({
@@ -237,6 +278,19 @@ describe("template assertion gate", () => {
         D: deployment,
         L: apiGatewayLogGroup,
         ExecutionRole: incompleteRole,
+      }),
+    ).toBe(1);
+  });
+
+  it("fails when transaction writes can be issued directly", () => {
+    const broadRole = structuredClone(executionRole);
+    delete broadRole.Properties.Policies[0].PolicyDocument.Statement[1].Condition;
+    expect(
+      runAgainst({
+        F: tracedFunction,
+        D: deployment,
+        L: apiGatewayLogGroup,
+        ExecutionRole: broadRole,
       }),
     ).toBe(1);
   });

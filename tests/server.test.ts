@@ -170,6 +170,46 @@ describe("stateless request handling", () => {
     expect(res.status).toBe(403);
   });
 
+  it("advertises both accepted page_size representations", async () => {
+    const response = await mcpModule.fetch(
+      new Request("https://local/datasets/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${bearerFor("client-a")}`,
+          "mcp-protocol-version": "2026-07-28",
+          "mcp-method": "tools/list",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/list",
+          params: { _meta: ENVELOPE },
+        }),
+      }),
+    );
+    const body = await response.json();
+    const tool = body.result.tools.find(
+      (candidate: { name: string }) => candidate.name === "dataset_open",
+    );
+    const alternatives = tool.inputSchema.properties.page_size.anyOf;
+
+    expect(response.status).toBe(200);
+    expect(alternatives).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "integer",
+          minimum: 1,
+          maximum: 50,
+        }),
+        expect.objectContaining({
+          type: "string",
+          pattern: "^(?:[1-9]|[1-4][0-9]|50)$",
+        }),
+      ]),
+    );
+  });
+
   it.each(["GET", "DELETE"])(
     "answers %s with 405, as a 2026-07-28 server should",
     async (method) => {
@@ -205,6 +245,47 @@ describe("explicit-handle lifecycle", () => {
     expect(handle?.kind).toBe("dataset-cursor");
     expect(handle?.version).toBe(0);
   });
+
+  it.each([20, "20"])(
+    "accepts page_size %j and normalizes it to a number",
+    async (pageSize) => {
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+      ddbMock.on(TransactWriteCommand).resolves({});
+
+      await resultOf(
+        await mcpModule.fetch(
+          toolCall("dataset_open", {
+            dataset: "orders",
+            page_size: pageSize,
+            idempotency_key: OPEN_KEY,
+          }),
+        ),
+      );
+
+      const transaction = ddbMock.commandCalls(TransactWriteCommand)[0].args[0].input;
+      const handle = transaction.TransactItems?.[0].Put?.Item;
+      expect(handle?.state).toMatchObject({ pageSize: 20 });
+    },
+  );
+
+  it.each([true, " 20", "01", "20.5", "51"])(
+    "rejects invalid page_size %j before accessing DynamoDB",
+    async (pageSize) => {
+      const response = await mcpModule.fetch(
+        toolCall("dataset_open", {
+          dataset: "orders",
+          page_size: pageSize,
+          idempotency_key: OPEN_KEY,
+        }),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.result.isError).toBe(true);
+      expect(body.result.content[0].text).toContain("Input validation error");
+      expect(ddbMock.commandCalls(TransactWriteCommand)).toHaveLength(0);
+    },
+  );
 
   it("dataset_open replays the original handle for the same key", async () => {
     const response = {
