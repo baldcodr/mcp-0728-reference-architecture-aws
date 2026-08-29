@@ -1,6 +1,6 @@
 # Deploying MCP 2026-07-28 servers on AWS: A serverless reference architecture 
 
-**Status:** Draft, August 2026 **Companion code:** [MCP 2026-07-28 reference architecture on AWS](https://github.com/baldcodr/mcp-0728-reference-architecture-aws). See the [README](https://github.com/baldcodr/mcp-0728-reference-architecture-aws/blob/main/README.md) for deployment and verification commands.
+**Status:** Draft, August 2026 **Companion code:** [MCP 2026-07-28 reference architecture on AWS](https://github.com/baldcodr/mcp-0728-reference-architecture-aws/tree/f38a3ba4cbcf21d0ac4c1cc6660a81fe6c5841c8). See the [README](https://github.com/baldcodr/mcp-0728-reference-architecture-aws/blob/f38a3ba4cbcf21d0ac4c1cc6660a81fe6c5841c8/README.md) for deployment and verification commands.
 
 ## Abstract
 
@@ -298,7 +298,7 @@ resource "aws_ssm_parameter" "token_endpoint" {
 
 The hardened store reads with `GetItem`, closes with `DeleteItem`, and writes through `TransactWriteItems`, all against the handle table ARN. DynamoDB authorizes each transaction suboperation through its underlying IAM action, so the role grants `PutItem` and `UpdateItem` only when `dynamodb:EnclosingOperation` is `TransactWriteItems` \[25\]. It needs neither `Query` nor `Scan`, and cannot issue `PutItem` or `UpdateItem` directly. Active X-Ray tracing adds AWS's required trace-write permissions, which do not support resource-level scoping.
 
-[Source: serverless.yml L48-L69](https://github.com/baldcodr/mcp-0728-reference-architecture-aws/blob/main/serverless.yml#L48-L69)
+[Source: serverless.yml L48-L69](https://github.com/baldcodr/mcp-0728-reference-architecture-aws/blob/f38a3ba4cbcf21d0ac4c1cc6660a81fe6c5841c8/serverless.yml#L48-L69)
 
 ```
   iam:
