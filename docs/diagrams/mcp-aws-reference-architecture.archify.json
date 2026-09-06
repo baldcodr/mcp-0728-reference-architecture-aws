@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "MCP 2026-07-28 on AWS: Serverless Reference Architecture",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "auth-boundary",
+        "label": "Authentication boundary",
+        "focus": ["client", "cognito", "waf", "gateway"],
+        "note": "Cognito mints scoped JWTs; the gateway authorizer and optional WAF gate ingress."
+      },
+      {
+        "id": "request-path",
+        "label": "Stateless request path",
+        "focus": ["client", "gateway", "lambda", "dynamo"],
+        "note": "No protocol sessions: any Lambda instance can serve any request."
+      },
+      {
+        "id": "state-replay",
+        "label": "Handles and replay",
+        "focus": ["lambda", "dynamo"],
+        "note": "Owner-bound handles and idempotent replay records share one DynamoDB table."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "client",
+      "type": "external",
+      "label": "Machine client",
+      "sublabel": "MCP 2026-07-28",
+      "tag": "pre-registered",
+      "pos": [40, 320],
+      "size": [150, 64]
+    },
+    {
+      "id": "cognito",
+      "type": "security",
+      "label": "Amazon Cognito",
+      "sublabel": "JWT + scope",
+      "tag": "Terraform",
+      "pos": [300, 160],
+      "size": [158, 64]
+    },
+    {
+      "id": "waf",
+      "type": "security",
+      "label": "AWS WAF",
+      "sublabel": "optional Web ACL",
+      "tag": "Terraform",
+      "pos": [300, 470],
+      "size": [158, 64]
+    },
+    {
+      "id": "gateway",
+      "type": "cloud",
+      "label": "API Gateway",
+      "sublabel": "regional REST · authorizer",
+      "tag": "Serverless v4",
+      "pos": [530, 320],
+      "size": [158, 64]
+    },
+    {
+      "id": "ssm",
+      "type": "cloud",
+      "label": "SSM Parameter Store",
+      "sublabel": "pool ARN · client id",
+      "tag": "Terraform",
+      "pos": [770, 160],
+      "size": [158, 64]
+    },
+    {
+      "id": "lambda",
+      "type": "backend",
+      "label": "Lambda · Node.js 22",
+      "sublabel": "MCP tools + JWT backstop",
+      "tag": "Serverless v4",
+      "pos": [770, 320],
+      "size": [158, 64]
+    },
+    {
+      "id": "xray",
+      "type": "cloud",
+      "label": "AWS X-Ray",
+      "sublabel": "sampled traces",
+      "tag": "Terraform",
+      "pos": [770, 470],
+      "size": [158, 64]
+    },
+    {
+      "id": "dynamo",
+      "type": "database",
+      "label": "DynamoDB",
+      "sublabel": "handles · replay · TTL",
+      "tag": "Serverless v4",
+      "pos": [1020, 320],
+      "size": [166, 64]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "AWS account · eu-west-2",
+      "wraps": ["cognito", "waf", "gateway", "ssm", "lambda", "xray", "dynamo"],
+      "pad": 22
+    },
+    {
+      "kind": "security-group",
+      "label": "primary authentication boundary",
+      "wraps": ["cognito", "gateway", "waf"],
+      "pad": 14
+    }
+  ],
+  "connections": [
+    { "from": "client", "to": "cognito", "label": "client_credentials grant", "variant": "security" },
+    { "from": "client", "to": "gateway", "label": "MCP JSON-RPC · Bearer JWT", "variant": "emphasis", "labelDy": 41 },
+    { "from": "gateway", "to": "cognito", "label": "validates JWT + scope", "variant": "security" },
+    { "from": "waf", "to": "gateway", "label": "optional ACL", "variant": "dashed" },
+    { "from": "gateway", "to": "lambda", "label": "proxy invoke", "variant": "emphasis" },
+    { "from": "lambda", "to": "dynamo", "label": "TransactWriteItems", "variant": "emphasis", "labelDy": -26 },
+    { "from": "ssm", "to": "lambda", "label": "package-time config", "variant": "dashed", "labelDy": 24 },
+    { "from": "lambda", "to": "xray", "label": "traces", "variant": "dashed", "labelDy": 24 }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Stateless by Design",
+      "items": [
+        "2026-07-28 removes protocol sessions and the init handshake",
+        "Any Lambda instance can serve any request",
+        "Continuity lives in explicit handles (SEP-2567)"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Defense in Depth",
+      "items": [
+        "Cognito at the edge, second JWT verifier inside Lambda",
+        "Handles bound to the verified client_id owner",
+        "Uniform unknown_handle avoids an existence oracle"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Deterministic Replay",
+      "items": [
+        "Handle + response committed in one TransactWriteItems",
+        "Idempotency keys hashed; same key with changed input is rejected",
+        "Full whitepaper on the AAIF blog: aaif.io/blog"
+      ]
+    }
+  ]
+}

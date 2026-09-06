@@ -1,5 +1,6 @@
 # MCP on AWS Serverless: Reference Implementation
 
+Official blog post on [Agentic AI Foundation(AAIF)](https://aaif.io/blog/deploying-mcp-2026-07-28-servers-on-aws-a-serverless-reference-architecture) .
 Deployable companion to `WHITEPAPER.md`: an MCP 2026-07-28 server on Lambda behind regional REST API Gateway, authenticated by Cognito, with owner-bound handles and TTL-scoped replay records in DynamoDB.
 
 ## Prerequisites
